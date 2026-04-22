@@ -60,6 +60,13 @@
         function pickRandomId() {
           return VIDEO_IDS[Math.floor(Math.random() * VIDEO_IDS.length)];
         }
+        function pickNextVideoId(excludeId) {
+          var pool = VIDEO_IDS.filter(function (id) {
+            return id !== excludeId;
+          });
+          if (pool.length === 0) return pickRandomId();
+          return pool[Math.floor(Math.random() * pool.length)];
+        }
         function readState() {
           try {
             var raw = localStorage.getItem(STATE_KEY);
@@ -184,6 +191,11 @@
               onStateChange: function (e) {
                 if (e.data === YT.PlayerState.ENDED) {
                   clearState();
+                  var cur = getVideoId();
+                  var next = pickNextVideoId(cur);
+                  if (next && player && typeof player.loadVideoById === "function") {
+                    player.loadVideoById({ videoId: next });
+                  }
                 } else if (e.data === YT.PlayerState.PAUSED) {
                   persistPosition();
                 }
