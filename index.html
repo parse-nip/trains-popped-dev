@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#000000" />
-    <title>Japanese train — trains.popped.dev</title>
+    <title>Abao Ambience — trains.popped.dev</title>
     <style>
       :root {
         color-scheme: dark;
@@ -39,34 +39,26 @@
   </head>
   <body>
     <div class="fullscreen">
-      <div id="yt-player" title="Japanese train video"></div>
+      <div id="yt-player" title="Abao Ambience video"></div>
     </div>
     <script>
       (function () {
-        var VIDEO_IDS = [
-          "q8nPaqfRm_c",
-          "h0vrvXBLoCU",
-          "eCE4hYw8AAI",
-        ];
         var STATE_KEY = "trains.popped.dev:player-v1";
         var LEGACY_TIME_KEY = "trains.popped.dev:yt:q8nPaqfRm_c";
+        /** If /api/random-video is unavailable, play this Abao Ambience video (must stay public). */
+        var FALLBACK_VIDEO_ID = "c0StuzQvdTg";
         var SAVE_EVERY_MS = 4000;
         var player = null;
         var saveTimer = null;
+        var START_VIDEO_ID = "";
+        var RESUME_T = null;
 
         function isValidVideoId(id) {
-          return VIDEO_IDS.indexOf(id) >= 0;
+          return (
+            typeof id === "string" && /^[a-zA-Z0-9_-]{11}$/.test(id)
+          );
         }
-        function pickRandomId() {
-          return VIDEO_IDS[Math.floor(Math.random() * VIDEO_IDS.length)];
-        }
-        function pickNextVideoId(excludeId) {
-          var pool = VIDEO_IDS.filter(function (id) {
-            return id !== excludeId;
-          });
-          if (pool.length === 0) return pickRandomId();
-          return pool[Math.floor(Math.random() * pool.length)];
-        }
+
         function readState() {
           try {
             var raw = localStorage.getItem(STATE_KEY);
@@ -106,21 +98,42 @@
           } catch (e) {}
         }
 
+        function fetchRandomFromApi(exclude) {
+          var q =
+            exclude && isValidVideoId(exclude)
+              ? "?exclude=" + encodeURIComponent(exclude)
+              : "";
+          return fetch("/api/random-video" + q)
+            .then(function (r) {
+              if (!r.ok) throw new Error("bad");
+              return r.json();
+            })
+            .then(function (d) {
+              if (!d || !isValidVideoId(d.videoId)) throw new Error("no id");
+              return d.videoId;
+            })
+            .catch(function () {
+              return FALLBACK_VIDEO_ID;
+            });
+        }
+
         function resolveStart() {
           var s = readState();
           if (s && s.t >= 0.5 && isValidVideoId(s.v)) {
-            return { videoId: s.v, resumeT: s.t, resuming: true };
+            START_VIDEO_ID = s.v;
+            RESUME_T = s.t;
+            return Promise.resolve();
           }
           if (s) clearState();
-          return { videoId: pickRandomId(), resumeT: null, resuming: false };
+          return fetchRandomFromApi().then(function (randomId) {
+            START_VIDEO_ID = randomId;
+            RESUME_T = null;
+          });
         }
 
-        var start = resolveStart();
-        var START_VIDEO_ID = start.videoId;
-        var RESUME_T = start.resuming ? start.resumeT : null;
-
         function getVideoId() {
-          if (!player || typeof player.getVideoData !== "function") return null;
+          if (!player || typeof player.getVideoData !== "function")
+            return null;
           var vd = player.getVideoData();
           return vd && vd.video_id ? vd.video_id : null;
         }
@@ -178,33 +191,45 @@
           }
         }
 
-        window.onYouTubeIframeAPIReady = function () {
-          player = new YT.Player("yt-player", {
-            width: "100%",
-            height: "100%",
-            videoId: START_VIDEO_ID,
-            playerVars: { rel: 0, enablejsapi: 1 },
-            events: {
-              onReady: function () {
-                tryRestore(0);
-              },
-              onStateChange: function (e) {
-                if (e.data === YT.PlayerState.ENDED) {
-                  clearState();
-                  var cur = getVideoId();
-                  var next = pickNextVideoId(cur);
-                  if (next && player && typeof player.loadVideoById === "function") {
-                    player.loadVideoById({ videoId: next });
-                  }
-                } else if (e.data === YT.PlayerState.PAUSED) {
-                  persistPosition();
-                }
-              },
-            },
+        function playNextAfterEnd() {
+          clearState();
+          var cur = getVideoId();
+          fetchRandomFromApi(cur).then(function (next) {
+            if (next && player && typeof player.loadVideoById === "function") {
+              player.loadVideoById({ videoId: next });
+            }
           });
-        };
+        }
+
+        function bootPlayer() {
+          window.onYouTubeIframeAPIReady = function () {
+            player = new YT.Player("yt-player", {
+              width: "100%",
+              height: "100%",
+              videoId: START_VIDEO_ID,
+              playerVars: { rel: 0, enablejsapi: 1 },
+              events: {
+                onReady: function () {
+                  tryRestore(0);
+                },
+                onStateChange: function (e) {
+                  if (e.data === YT.PlayerState.ENDED) {
+                    playNextAfterEnd();
+                  } else if (e.data === YT.PlayerState.PAUSED) {
+                    persistPosition();
+                  }
+                },
+              },
+            });
+          };
+          var s = document.createElement("script");
+          s.async = true;
+          s.src = "https://www.youtube.com/iframe_api";
+          document.body.appendChild(s);
+        }
+
+        resolveStart().then(bootPlayer);
       })();
     </script>
-    <script async src="https://www.youtube.com/iframe_api"></script>
   </body>
 </html>
