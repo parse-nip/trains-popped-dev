@@ -43,40 +43,93 @@
     </div>
     <script>
       (function () {
-        var VIDEO_ID = "q8nPaqfRm_c";
-        var STORAGE_KEY = "trains.popped.dev:yt:" + VIDEO_ID;
+        var VIDEO_IDS = [
+          "q8nPaqfRm_c",
+          "h0vrvXBLoCU",
+          "eCE4hYw8AAI",
+        ];
+        var STATE_KEY = "trains.popped.dev:player-v1";
+        var LEGACY_TIME_KEY = "trains.popped.dev:yt:q8nPaqfRm_c";
         var SAVE_EVERY_MS = 4000;
         var player = null;
         var saveTimer = null;
 
-        function storageGet() {
+        function isValidVideoId(id) {
+          return VIDEO_IDS.indexOf(id) >= 0;
+        }
+        function pickRandomId() {
+          return VIDEO_IDS[Math.floor(Math.random() * VIDEO_IDS.length)];
+        }
+        function readState() {
           try {
-            return localStorage.getItem(STORAGE_KEY);
-          } catch (e) {
-            return null;
+            var raw = localStorage.getItem(STATE_KEY);
+            if (raw) {
+              var o = JSON.parse(raw);
+              if (
+                o &&
+                typeof o.v === "string" &&
+                typeof o.t === "number" &&
+                isValidVideoId(o.v)
+              ) {
+                return { v: o.v, t: o.t };
+              }
+            }
+          } catch (e) {}
+          try {
+            var leg = localStorage.getItem(LEGACY_TIME_KEY);
+            if (leg) {
+              var t0 = parseFloat(leg, 10);
+              if (isFinite(t0) && t0 >= 0.5) {
+                localStorage.removeItem(LEGACY_TIME_KEY);
+                return { v: "q8nPaqfRm_c", t: t0 };
+              }
+            }
+          } catch (e) {}
+          return null;
+        }
+        function writeState(v, t) {
+          try {
+            localStorage.setItem(STATE_KEY, JSON.stringify({ v: v, t: t }));
+          } catch (e) {}
+        }
+        function clearState() {
+          try {
+            localStorage.removeItem(STATE_KEY);
+            localStorage.removeItem(LEGACY_TIME_KEY);
+          } catch (e) {}
+        }
+
+        function resolveStart() {
+          var s = readState();
+          if (s && s.t >= 0.5 && isValidVideoId(s.v)) {
+            return { videoId: s.v, resumeT: s.t, resuming: true };
           }
+          if (s) clearState();
+          return { videoId: pickRandomId(), resumeT: null, resuming: false };
         }
-        function storageSet(s) {
-          try {
-            localStorage.setItem(STORAGE_KEY, s);
-          } catch (e) {}
-        }
-        function storageRemove() {
-          try {
-            localStorage.removeItem(STORAGE_KEY);
-          } catch (e) {}
+
+        var start = resolveStart();
+        var START_VIDEO_ID = start.videoId;
+        var RESUME_T = start.resuming ? start.resumeT : null;
+
+        function getVideoId() {
+          if (!player || typeof player.getVideoData !== "function") return null;
+          var vd = player.getVideoData();
+          return vd && vd.video_id ? vd.video_id : null;
         }
 
         function persistPosition() {
           if (!player || typeof player.getCurrentTime !== "function") return;
           var t = player.getCurrentTime();
           var d = player.getDuration();
+          var vid = getVideoId();
+          if (!vid || !isValidVideoId(vid)) return;
           if (typeof t !== "number" || t < 0.5) return;
           if (typeof d === "number" && d > 0 && t >= d - 2) {
-            storageRemove();
+            clearState();
             return;
           }
-          storageSet(String(t));
+          writeState(vid, t);
         }
 
         function wireAutoSave() {
@@ -89,14 +142,13 @@
         }
 
         function tryRestore(attempt) {
-          var raw = storageGet();
-          if (raw == null) {
+          if (RESUME_T == null) {
             wireAutoSave();
             return;
           }
-          var t = parseFloat(raw, 10);
+          var t = RESUME_T;
           if (!isFinite(t) || t < 0.5) {
-            storageRemove();
+            clearState();
             wireAutoSave();
             return;
           }
@@ -105,7 +157,7 @@
             if (t < d - 1) {
               player.seekTo(t, true);
             } else {
-              storageRemove();
+              clearState();
             }
             wireAutoSave();
             return;
@@ -123,7 +175,7 @@
           player = new YT.Player("yt-player", {
             width: "100%",
             height: "100%",
-            videoId: VIDEO_ID,
+            videoId: START_VIDEO_ID,
             playerVars: { rel: 0, enablejsapi: 1 },
             events: {
               onReady: function () {
@@ -131,7 +183,7 @@
               },
               onStateChange: function (e) {
                 if (e.data === YT.PlayerState.ENDED) {
-                  storageRemove();
+                  clearState();
                 } else if (e.data === YT.PlayerState.PAUSED) {
                   persistPosition();
                 }
